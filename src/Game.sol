@@ -23,15 +23,25 @@ contract Game is Ownable {
         Untouched
      }
 
+     enum GameStatus {
+        NotStarted,
+        Ongoing,
+        Ended
+     }
+
     uint256 immutable public BOARDLENGTH = 9;
+    uint256 public constant GAME_TIME = 5 minutes;
+
     event GameEnded(bool playerWins, uint256 roundNumber, uint256 gameNumber);
 
      uint256 public roundNumber;
      uint256 public gameNumber;
      uint256 private nonMineCount;
+     uint256 public startTime;
+     uint256 public timeTaken;
 
-    CoordinateStatus[BOARDLENGTH][BOARDLENGTH] private playerBoard;
-    CoordinateStatus[BOARDLENGTH][BOARDLENGTH] private realBoard;
+    CoordinateStatus[][] private playerBoard;
+    CoordinateStatus[][] private realBoard;
 
     Coordinates[] private mines;
 
@@ -42,10 +52,16 @@ contract Game is Ownable {
     }
 
     function initializeGame() internal {
+        
+        for(uint256 i = 0; i < BOARDLENGTH;i++){
+            playerBoard[i] = new CoordinateStatus[](BOARDLENGTH); 
+            realBoard[i] = new CoordinateStatus[](BOARDLENGTH); 
+        }
         for(uint256 i = 0; i < mines.length;i++){
             realBoard[mines[i].x][mines[i].y] = CoordinateStatus.Mine; 
         }
         intializeBoards();
+        startTime = block.timestamp;
     }
 
     function intializeBoards() internal {
@@ -71,9 +87,7 @@ contract Game is Ownable {
         }
     }
 
-    // TODO:
-    // function incrementIfMine
-    function isValid(uint256 x, uint256 y) internal view returns (bool) {
+    function isValid(uint256 x, uint256 y) internal pure returns (bool) {
         if( 0 <= x && x <= BOARDLENGTH && 0 <= y && y <= BOARDLENGTH){
             return true;
         }
@@ -96,6 +110,7 @@ contract Game is Ownable {
             nonMineCount--;
             
             if(hasPlayerWon()){
+                timeTaken = block.timestamp - startTime;
                 emit GameEnded(true, roundNumber, gameNumber);
             }
             return;
@@ -138,7 +153,7 @@ contract Game is Ownable {
         return;
     }
 
-    function hasPlayerWon() public returns (bool) {
+    function hasPlayerWon() public view returns (bool) {
         return nonMineCount == 0;
     }
 

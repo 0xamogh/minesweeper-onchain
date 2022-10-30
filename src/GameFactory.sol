@@ -7,9 +7,34 @@ import '@chainlink/contracts/src/v0.8/ConfirmedOwner.sol';
 
 
 contract GameFactory is VRFConsumerBaseV2, ConfirmedOwner {
+    
+    uint256 public constant PRICE = 1 * 10**15; // Price to start a game token, 0.001 MATIC
+    uint256 public constant ROUND_TIME = 1 hours;
+    uint256 public constant NUMBER_OF_MINES= 10;
+    uint256 public constant BOARDLENGTH = 9;
+    
+    enum RoundStatus {
+        RoundNotStarted,
+        RoundOngoing,
+        RoundEnded
+    }
+
     uint256 public currentRound;
-    uint256 public timeTillNextRound;
+    Game public currentRoundBest;
+    uint256 public roundStartTime;
     uint256 public numberOfGamesInCurrentRound;
+    mapping(uint256 => RoundStatus) public roundInfo;
+    
+    //Stores a mapping of Chainlink requestIds to gameIds of the current round
+    mapping(uint256 => uint256) public requestIds;
+    
+    //Stores a mapping of gameId to Game for the currentRound
+    mapping(uint256 => Game) public currentGames;
+
+    //Store a historical mapping of all games ever played.
+    mapping(address => Game) public allGames;
+    // array with all Game addresses
+    // mapping with game address v. scores;
 
     /*
     CHAINLINK VARS
@@ -30,10 +55,9 @@ contract GameFactory is VRFConsumerBaseV2, ConfirmedOwner {
     bytes32 keyHash = 0x4b09e658ed251bcafeebbc69400383d49f344ace09b9576fe248bb02c003fe9f;
     uint32 callbackGasLimit = 100000;
     uint16 requestConfirmations = 3;
-    uint32 numWords = 80;
 
     // past requests Id.
-    uint256[] public requestIds;
+    // uint256[] public requestIds;
     uint256 public lastRequestId;
 
     constructor(uint256 subId) 
@@ -44,19 +68,55 @@ contract GameFactory is VRFConsumerBaseV2, ConfirmedOwner {
         s_subscriptionId = subId;
     }
 
+    function createGame(uint256 roundId) public payable returns (uint256 gameId){
+        if(block.timestamp - roundStartTime >= 1 hours){
+            //END ROUND
+            roundInfo[currentRound] = RoundStatus.RoundEnded;
+            compileWinners();
+        }
+        require(msg.value == PRICE, 'Game Factory : Incorrect price');
+        // require(roundInfo[roundId] != RoundStatus.RoundEnded,"Game Factory : Round has already ended, please try again with the correct round number");
+        if(roundInfo[currentRound] == RoundStatus.RoundEnded || currentRound == 0 ) {
+            startRound();
+        }
 
-    function createGame() public {
-        // approval - contribute to pot
-        
-        // make request to chainlink
-
+        // current game number is 
+        requestIds[numberOfGamesInCurrentRound-1] = requestRandomWords(NUMBER_OF_MINES*2);
         // create new game with obtained random number tokens
 
-        Game game = new Game(msg.sender, mines);
+        Game game = new Game(mines);
+        // Initial score is set to max time that can be taken
+        currentGames[game.gameNumber] = game;
+        allGames[game.address] = game;
+    }
+
+    function startRound() internal returns (uint256 roundId) {
+        
+        require(roundInfo[currentRound] == RoundStatus.RoundEnded,"Game Factory : Current Round has not ended yet");
+        currentRound++;
+        numberOfGamesInCurrentRound = 0;
+        
+        require(roundInfo[currentRound] == RoundStatus.RoundNotStarted, "Game Factory: Current has already started");
+        roundInfo[currentRound] = RoundStatus.RoundOngoing;
+        roundStartTime = block.timestamp;
+        //reset timer
+        
+        return currentRound;
+    }
+
+    function compileWinners() internal {
+        uint256 minTime = 15 minutes;
+        for(uint256 i = 0; i < numberOfGamesInCurrentRound; i++){
+            Game game = currentGames[i];
+            if(game.GameStatus == Game.GameStatus.Ended && game.hasPlayerWon() && minTime < game.timeTaken){
+                minTime = game.timeTaken;
+                currentRoundBest = game;
+            }
+        }
     }
 
     function generateCoordinates(uint256[] memory randomWords, uint256 numCoords) internal returns (Coordinates[] memory) {
-        require(len(randomWords) >= numCoords*2,"GameFactory : Too few random numbers generated");
+        require(randomWords.length >= numCoords*2,"GameFactory : Too few random numbers generated");
         Coordinates[numCoords] coords;
         for(uint256 i = 0; i < numCoords; i++){
             coords[i].x = randomWords[i];
@@ -69,7 +129,7 @@ contract GameFactory is VRFConsumerBaseV2, ConfirmedOwner {
     CHAINLINK FUNCS
     */
         // Assumes the subscription is funded sufficiently.
-    function requestRandomWords() external onlyOwner returns (uint256 requestId) {
+    function requestRandomWords(uint256 numWords) internal returns (uint256 requestId) {
         // Will revert if subscription is not set and funded.
         requestId = COORDINATOR.requestRandomWords(
             keyHash,
@@ -89,6 +149,11 @@ contract GameFactory is VRFConsumerBaseV2, ConfirmedOwner {
         require(s_requests[_requestId].exists, 'request not found');
         s_requests[_requestId].fulfilled = true;
         s_requests[_requestId].randomWords = _randomWords;
+        
+        for(uint256 i =0; i < _randomWords.length; i ++){
+            _randomWords[i] = _randomWords[i] % BOARDLENGTH; 
+        }
+
         emit RequestFulfilled(_requestId, _randomWords);
     }
 
