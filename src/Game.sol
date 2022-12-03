@@ -2,6 +2,7 @@
 pragma solidity ^0.8.13;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./GameFactory.sol";
+import "hardhat/console.sol";
 
 contract Game is Ownable {
 
@@ -34,7 +35,7 @@ contract Game is Ownable {
     uint256 public constant GAME_TIME = 5 minutes;
     uint256 public constant NUM_MINES = 10;
 
-    event GameEnded(bool playerWins, uint256 roundNumber, uint256 gameId);
+    event GameEnded(bool playerWins, uint256 gameId);
 
     Game private previousGame;
      uint256 public gameId;
@@ -44,8 +45,8 @@ contract Game is Ownable {
      uint256 public timeTaken;
      GameStatus public gameStatus;
 
-    CoordinateStatus[][] private playerBoard;
-    CoordinateStatus[][] private realBoard;
+    CoordinateStatus[][] public playerBoard;
+    CoordinateStatus[][] public realBoard;
 
     mapping(uint256 => Coordinates) private mines;
     // uint256[] private randomNumbers;
@@ -58,106 +59,135 @@ contract Game is Ownable {
     function initializeGame() internal {
         nonMineCount = BOARDLENGTH*BOARDLENGTH - NUM_MINES;
         
+        playerBoard = new CoordinateStatus[][](BOARDLENGTH);
+        realBoard = new CoordinateStatus[][](BOARDLENGTH);
         for(uint256 i = 0; i < BOARDLENGTH;i++){
+            console.log("this is fucking up");
             playerBoard[i] = new CoordinateStatus[](BOARDLENGTH); 
             realBoard[i] = new CoordinateStatus[](BOARDLENGTH); 
         }
         
         for(uint256 i = 0; i < NUM_MINES;i++){
+            console.log("this works",mines[i].x,mines[i].y);
             realBoard[mines[i].x][mines[i].y] = CoordinateStatus.Mine; 
         }
-        
+        console.log("reaches here");
         intializeBoards();
         startTime = block.timestamp;
+        gameStatus = GameStatus.NotStarted;
     }
 
     function intializeBoards() internal {
         for(uint256 i = 0; i < BOARDLENGTH; i++){
             for(uint256 j = 0; j < BOARDLENGTH; j++){
+                console.log("iteration i j", i,j);
                 playerBoard[i][j] = CoordinateStatus.Untouched;
 
                 if(realBoard[i][j] == CoordinateStatus.Mine){
                     continue;
                 }
+                console.log("initializeBoards");
 
                 uint256 counter = 0;
-                counter =  isMine(i-1,j-1) ? counter + 1 : counter; 
-                counter =  isMine(i-1,j) ? counter + 1 : counter; 
-                counter =  isMine(i-1,j+1) ? counter + 1 : counter; 
-                counter =  isMine(i,j-1) ? counter + 1 : counter; 
-                counter =  isMine(i,j+1) ? counter + 1 : counter; 
-                counter =  isMine(i+1,j-1) ? counter + 1 : counter; 
-                counter =  isMine(i+1,j) ? counter + 1 : counter; 
-                counter =  isMine(i+1,j+1) ? counter + 1 : counter; 
+
+                counter =  isMine(int256(i)-1,int256(j)-1) ? counter + 1 : counter; 
+                counter =  isMine(int256(i)-1,int256(j)) ? counter + 1 : counter; 
+                counter =  isMine(int256(i)-1,int256(j)+1) ? counter + 1 : counter; 
+                counter =  isMine(int256(i),int256(j)-1) ? counter + 1 : counter; 
+                counter =  isMine(int256(i),int256(j)+1) ? counter + 1 : counter; 
+                counter =  isMine(int256(i)+1,int256(j)-1) ? counter + 1 : counter; 
+                counter =  isMine(int256(i)+1,int256(j)) ? counter + 1 : counter; 
+                counter =  isMine(int256(i)+1,int256(j)+1) ? counter + 1 : counter; 
                 realBoard[i][j] = CoordinateStatus(counter);
+
             }
         }
     }
 
-    function isValid(uint256 x, uint256 y) internal pure returns (bool) {
-        if( 0 <= x && x <= BOARDLENGTH && 0 <= y && y <= BOARDLENGTH){
+    function isValid(int256 x, int256 y) internal pure returns (bool) {
+        if( 0 <= x && 0 <= y && uint256(x) < BOARDLENGTH && uint256(y) < BOARDLENGTH){
             return true;
         }
         return false;
     }
 
-    function isMine(uint256 x, uint256 y) internal view returns (bool) {
-        if( isValid(x,y) && realBoard[x][y] == CoordinateStatus.Mine){
+    function isMine(int256 x, int256 y) internal view returns (bool) {
+        if( isValid(x,y) && realBoard[uint256(x)][uint256(y)] == CoordinateStatus.Mine){
             return true;
         }
         return false;
     }
 
-    function processMove(uint256 x, uint256 y) public {
-        CoordinateStatus current = realBoard[x][y];
+    function processMove(uint256 x, uint256 y) public returns (bool) {
+        if(gameStatus != GameStatus.Ongoing){
+            gameStatus = GameStatus.Ongoing;
+            console.log("gameStatus = GameStatus.Ongoing");
+        }
+        CoordinateStatus realCurrent = realBoard[x][y];
+        CoordinateStatus playerCurrent = playerBoard[x][y];
+        console.log("processMove 0",x,y);
 
-        if(current != CoordinateStatus.Zero){
-            
-            playerBoard[x][y] = current;
-            nonMineCount--;
-            
-            if(hasPlayerWon()){
-                timeTaken = block.timestamp - startTime;
-                emit GameEnded(true, roundNumber, gameId);
-            }
-            return;
+        if(playerCurrent != CoordinateStatus.Untouched){
+            return false;
         }
 
-        if(current == CoordinateStatus.Mine){
+        if(realCurrent == CoordinateStatus.Mine){
+            //Reveal all mines
             for(uint256 i = 0; i < numMines; i++){
                 playerBoard[mines[i].x][mines[i].y] = CoordinateStatus.Mine;
             }
-            emit GameEnded(false, roundNumber, gameId);
-            return;
+            emit GameEnded(false, gameId);
+            gameStatus = GameStatus.Ended;
+            console.log("gameStatus = GameStatus.Ended");
+            return true;
         } else {
+            console.log("nonMineCount",nonMineCount);
+            playerBoard[x][y] = realCurrent;
+
             nonMineCount--;
 
-            if(!isMine(x-1,y-1)){
+            console.log("processMove 2",x,y);
+
+            if(isValid(int256(x)-1,int256(y)-1) && !isMine(int256(x)-1,int256(y)-1)){
                 processMove(x-1,y-1);
             }
-            if(!isMine(x-1,y)){
+
+            console.log("processMove 23",x,y);
+            if(isValid(int256(x)-1,int256(y)) && !isMine(int256(x)-1,int256(y))){
                 processMove(x-1,y);
             }
-            if(!isMine(x-1,y+1)){
+
+            console.log("processMove 24",x,y);
+            if(isValid(int256(x)-1,int256(y)+1) && !isMine(int256(x)-1,int256(y)+1)){
                 processMove(x-1,y+1);
             }
-            if(!isMine(x,y-1)){
+
+            console.log("processMove 25",x,y);
+            if(isValid(int256(x),int256(y)-1) && !isMine(int256(x),int256(y)-1)){
                 processMove(x,y-1);
             }
-            if(!isMine(x,y+1)){
+
+            console.log("processMove 26",x,y);
+            if(isValid(int256(x),int256(y)+1) && !isMine(int256(x),int256(y)+1)){
                 processMove(x,y+1);
             }
-            if(!isMine(x+1,y-1)){
+
+            console.log("processMove 27",x,y);
+            if(isValid(int256(x)+1,int256(y)-1) && !isMine(int256(x)+1,int256(y)-1)){
                 processMove(x+1,y-1);
             }
-            if(!isMine(x+1,y)){
+ 
+             console.log("processMove 28",x,y);
+           if(isValid(int256(x)+1,int256(y)) && !isMine(int256(x)+1,int256(y))){
                 processMove(x+1,y);
             }
-            if(!isMine(x+1,y+1)){
+ 
+             console.log("processMove 28=9",x,y);
+           if(isValid(int256(x)+1,int256(y)+1) && !isMine(int256(x)+1,int256(y)+1)){
                 processMove(x+1,y+1);
             }
+        return false;
         }
-        return;
     }
 
     function hasPlayerWon() public view returns (bool) {
@@ -175,6 +205,7 @@ contract Game is Ownable {
             coords.x = randomWords[i];
             coords.y = randomWords[i+1];
         }
+        console.log("loop complete");
     }
 
 }
